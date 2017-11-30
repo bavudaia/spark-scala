@@ -1,8 +1,13 @@
 package com.spark.smartchair;
 
 
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.Serializable;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -17,6 +22,10 @@ import org.apache.spark.streaming.api.java.JavaDStream;
 import org.apache.spark.streaming.api.java.JavaPairInputDStream;
 import org.apache.spark.streaming.api.java.JavaStreamingContext;
 import org.apache.spark.streaming.kafka.KafkaUtils;
+import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttException;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.json.JSONObject;
 
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
@@ -27,6 +36,8 @@ import com.amazonaws.services.dynamodbv2.document.Table;
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
+import com.google.gson.JsonObject;
 
 import kafka.serializer.StringDecoder;
 import scala.Tuple2;
@@ -54,11 +65,12 @@ public class KafkaSparkStreamProcess implements Serializable{
 		@Override
 		public void call(JavaRDD<Posture> t) throws Exception {
 			// TODO Auto-generated method stub
+			if(t.isEmpty()) {
+				return;
+			}
 			Posture pMin = t.min(new PostureTimeComparator());
-			System.out.println(pMin.getTime());
 			
 			Posture pMax = t.max(new PostureTimeComparator());
-			System.out.println(pMax.getTime());
 			Posture maxPosture = t.mapToPair(x -> new Tuple2<>(x, 1)).reduceByKey((i1,i2)-> i1+i2).max(new TupleComparator())._1();
 			System.out.println(maxPosture.getPostureGrade());
 			if("Very Poor".equals(maxPosture.getPostureGrade()) || "Poor".equals(maxPosture.getPostureGrade())) {
@@ -73,7 +85,7 @@ public class KafkaSparkStreamProcess implements Serializable{
 		SparkConf sparkConf = new SparkConf().setAppName("KafkaSparkStreamProcess").setMaster("local[4]");
 		JavaStreamingContext ssc = new JavaStreamingContext(sparkConf, Durations.minutes(INTERVAL));
 		Map<String, String> kafkaParams = new HashMap<>();
-		kafkaParams.put("metadata.broker.list", "localhost:9092");
+		kafkaParams.put("metadata.broker.list", "34.215.24.129:9092");
 
 		Set<String> topics = new HashSet<>();
 		topics.add("smartchair");
@@ -99,14 +111,76 @@ public class KafkaSparkStreamProcess implements Serializable{
 		ssc.awaitTermination();
 	}
 	
-	private static void sendNotification(Posture posture,long startTime, long endTime) {
+	private static void sendMqtt(String title, String body) throws MqttException {
+		MqttClient client = new MqttClient("tcp://test.mosquitto.org:1883", MqttClient.generateClientId());
+		client.connect();
+		MqttMessage message = new MqttMessage();
+		String payload = new JSONObject().put("body", message).put("title", title).toString();
+		message.setPayload(payload.getBytes());
+		client.publish("notification_smartchair", message);
+	}
+	
+    private static void sendPushNotification(String title, String message) throws Exception {
+        /*
+			String pushMessage = "{\"data\":{\"title\":\"" +
+                title +
+                "\",\"message\":\"" +
+                message +
+                "\"},\"to\":\"" +
+                DEVICE_TOKEN +
+                "\"}";
+        */
+        String pushMessage = 
+        		//new JSONObject().put("data",
+        		new JSONObject().put("message", 
+        		new JSONObject()
+        		.put("topic", "news")
+        		.put("notification", new JSONObject().put("body", message)
+        				.put("title", title)
+        				)
+        		//.put("token", DEVICE_TOKEN)
+        				)
+        		//)
+        		.toString();
+       System.out.println(pushMessage); 
+       
+       URL url = new URL("https://fcm.googleapis.com/v1/projects/smartchair-5e2da/messages:send");
+       HttpURLConnection httpURLConnection = (HttpURLConnection) url.openConnection();
+       String accessToken= getAccessToken();
+       System.out.println(accessToken);
+       httpURLConnection.setRequestProperty("Authorization", "Bearer " + accessToken);
+       httpURLConnection.setRequestProperty("Content-Type", "application/json; UTF-8");
+       httpURLConnection.setDoOutput(true);
+       httpURLConnection.setRequestMethod("POST");
+        // Send FCM message content.
+        OutputStream outputStream = httpURLConnection.getOutputStream();
+        outputStream.write(pushMessage.getBytes());
+        
+        System.out.println(httpURLConnection.getResponseCode());
+        System.out.println(httpURLConnection.getResponseMessage());
+    }
+    
+    private static String getAccessToken() throws IOException {
+    	  GoogleCredential googleCredential = GoogleCredential
+    	      .fromStream(new FileInputStream("smartchair-5e2da-firebase-adminsdk-1bkgw-410f7f6556.json"))
+    	      .createScoped(Collections.singleton("https://www.googleapis.com/auth/firebase.messaging"))
+    	      ;
+    	  googleCredential.refreshToken();
+    	  return googleCredential.getAccessToken();
+    	}
+	
+	private static void sendNotification(Posture posture,long startTime, long endTime) throws Exception {
 		System.out.println("-- Sending Notification --");
+		sendPushNotification("Correct your Posture", posture.getReco());
+		sendMqtt("Correct your Posture", posture.getReco());
   		notificationTable.putItem(new Item().withString("NotificationId",UUID.randomUUID().toString()).withInt("UserID", posture.getUserId()).withLong("StartTime", startTime)
 		.withLong("EndTime", endTime)
 		.withString("PostureGrade", posture.getPostureGrade())
 		.withString("PostureID", String.valueOf(posture.getPostureId()))
 		.withString("Recommendation", posture.getReco()));
+  		
 	}
+	
 	private static void sendPostureToDynamoDB(Posture posture, long startTime, long endTime) {
 		System.out.println(startTime + " --> " + endTime);
 		System.out.println("Sending to DB");
