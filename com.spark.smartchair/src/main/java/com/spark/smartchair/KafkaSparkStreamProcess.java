@@ -45,7 +45,7 @@ import scala.Tuple2;
 public class KafkaSparkStreamProcess implements Serializable{
 	
 	private static final long serialVersionUID = -8769285377428486688L;
-	private static final int INTERVAL = 5;
+	private static final int INTERVAL = 2;
     static AmazonDynamoDB client ;
     static DynamoDB dynamoDB ;
     static Table table;
