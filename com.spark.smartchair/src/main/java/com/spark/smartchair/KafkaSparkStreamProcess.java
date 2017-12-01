@@ -193,10 +193,10 @@ public class KafkaSparkStreamProcess implements Serializable{
 	public static Posture getPosture(String sensorData) throws JsonParseException, JsonMappingException, IOException {
 		ObjectMapper mapper = new ObjectMapper();
 		Sensor sensor = mapper.readValue(sensorData, Sensor.class);
-		/*
+		
 		Posture posture = getActualPosture(sensor);
-		*/
-		Posture posture = getRandomPosture();
+	
+		//Posture posture = getRandomPosture();
 		posture.setTime(sensor.getTime());
 		
 		return posture;
@@ -211,7 +211,7 @@ public class KafkaSparkStreamProcess implements Serializable{
 		int angle = sensor.getAngle();
 		Posture posture = new Posture(); posture.setUserId(1);posture.setTime(sensor.getTime());
 		// Not Sitting
-		if(pLowerBack < 600 && pEdgeOfSeat < 600 && pBackRestBottom < 600 && pBackRestTop < 600 ) {
+		if(pLowerBack < 200 && pEdgeOfSeat < 200 && pBackRestBottom < 200 && pBackRestTop < 200 ) {
 			posture.setReco("N/A");posture.setPostureId(8);posture.setPostureGrade("Not Sitting");
 		}
 		// recline too much
